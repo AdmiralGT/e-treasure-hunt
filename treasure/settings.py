@@ -99,8 +99,18 @@ LOGGING = {
     },
 }
 
-# Activate Django-Heroku.
-django_heroku.settings(locals(), logging=False)
+# Don't activate Django-Heroku in local run mode
+# django_heroku.settings(locals(), logging=False)
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': os.environ.get('DJ_HUNT_NAME',''),
+        'USER': os.environ.get('DJ_HUNT_USER',''),
+        'PASSWORD': os.environ.get('DJ_HUNT_PASS',''),
+        'HOST': 'localhost',
+        'PORT': '5432',
+    }
+}
 
 
 # Password validation
