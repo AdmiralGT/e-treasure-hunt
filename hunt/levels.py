@@ -1,14 +1,12 @@
 from django.contrib.auth.models import User
-from django.db.models import Max
-from django.http.request import HttpRequest
 from django.template import loader
 from django.utils import timezone
-from geopy import distance
-from storages.backends.dropbox import DropBoxStorage
+from geopy import Point, distance
 
 import hunt.slack as slack
 from hunt.constants import HINTS_PER_LEVEL
 from hunt.models import HuntEvent, Level
+from hunt.utils import AuthenticatedHttpRequest, max_level
 
 
 def advance_level(user: User) -> None:
@@ -35,7 +33,7 @@ def advance_level(user: User) -> None:
         slack.cancel_pending_announcements(hunt_info.slack_channel)
 
 
-def look_for_level(request: HttpRequest) -> str:
+def look_for_level(request: AuthenticatedHttpRequest) -> str:
     # Get latitude and longitude - without these there can be no searching.
     latitude = request.GET.get("lat")
     longitude = request.GET.get("long")
@@ -53,11 +51,16 @@ def look_for_level(request: HttpRequest) -> str:
     if search_level > team_level:
         return "/oops"
 
+    # Make sure we're searching in a valid place.
+    try:
+        search_point = Point(latitude, longitude)
+    except ValueError:
+        return "/oops"
+
     # Get the distance between the search location and the level solution.
     level = Level.objects.get(number=search_level)
-    level_coords = (level.latitude, level.longitude)
-    search_coords = (latitude, longitude)
-    dist = distance.distance(search_coords, level_coords).m
+    level_point = Point(level.latitude, level.longitude)
+    dist = distance.distance(search_point, level_point).m
 
     # If the distance is small enough, accept the solution.
     if dist <= level.tolerance:
@@ -71,13 +74,13 @@ def look_for_level(request: HttpRequest) -> str:
     return "/nothing-here?lvl=" + str(search_level)
 
 
-def maybe_load_level(request: HttpRequest, level_num: int) -> str:
+def maybe_load_level(request: AuthenticatedHttpRequest, level_num: int) -> str:
     # Get the user details.
     user = request.user
     team = user.huntinfo
 
     # Find the last level.  Staff can see everything.
-    max_level_num = Level.objects.all().aggregate(Max("number"))["number__max"]
+    max_level_num = max_level()
     team_level_num = max_level_num if user.is_staff else team.level
 
     # Only load the level if it's one the team has access to.
@@ -90,9 +93,8 @@ def maybe_load_level(request: HttpRequest, level_num: int) -> str:
         num_hints = HINTS_PER_LEVEL if level_num < team_level_num else team.hints_shown
 
         # Get the URLs for the images to show.
-        fs = DropBoxStorage()
         hints = current_level.hint_set.filter(number__lt=num_hints).order_by("number")
-        hint_urls = [fs.url(hint.filename) for hint in hints]
+        hint_urls = [hint.image.url for hint in hints]
 
         # Is this the last level?
         is_last_level = current_level.number == max_level_num
@@ -138,14 +140,10 @@ def maybe_load_level(request: HttpRequest, level_num: int) -> str:
     return rendered
 
 
-def list_levels(request: HttpRequest) -> str:
+def list_levels(request: AuthenticatedHttpRequest) -> str:
     # Get the team's current level.  Staff can see all levels.
     user = request.user
-    team_level = (
-        Level.objects.all().aggregate(Max("number"))["number__max"]
-        if user.is_staff
-        else user.huntinfo.level
-    )
+    team_level = max_level() if user.is_staff else user.huntinfo.level
 
     # Make a list of all the levels to display.
     levels = list(range(1, team_level + 1))

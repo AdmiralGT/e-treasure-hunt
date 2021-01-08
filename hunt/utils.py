@@ -2,14 +2,27 @@ import datetime
 from functools import wraps
 from typing import Any, Callable
 
+import holidays
 import pytz
+from django.contrib.auth.models import User
+from django.db.models import Max
 from django.http.request import HttpRequest
 from django.http.response import HttpResponse
 from django.template import loader
 
-import holidays
+from hunt.models import Level
+
+
+class AuthenticatedHttpRequest(HttpRequest):
+    user: User
+
 
 RequestHandler = Callable[..., HttpResponse]
+
+
+def max_level() -> int:
+    max_level: int = Level.objects.all().aggregate(Max("number"))["number__max"]
+    return max_level
 
 
 # Are we in (UK) working hours?
@@ -17,11 +30,11 @@ def is_working_hours() -> bool:
     london = pytz.timezone("Europe/London")
     now = datetime.datetime.now(tz=london)
 
-    # Don't allow anything before the start time - noon on the 13th April.
-    # start = datetime.datetime(2020, 4, 13, 12)
-    # start = london.localize(start)
-    # if now < start:
-    #     return True
+    # Don't allow anything before the start time - 17:30 on the 27th August
+    start = datetime.datetime(2020, 8, 27, 17, 30)
+    start = london.localize(start)
+    if now < start:
+        return True
 
     # We don't work at the weekend.
     if now.weekday() > 4:
